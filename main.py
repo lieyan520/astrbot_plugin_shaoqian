@@ -4,10 +4,13 @@ import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from astrbot.api.event import AstrMessageEvent
+from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api.message_components import Plain, Image
 from astrbot.api import logger
+
+DATA_FILE = "data/spoon_sign.json"
+IMAGE_FOLDER = "data/spoon_images"
 
 @register("spoon_sign", "你的名字", "勺签插件，每日签到、抽卡、排行榜", "1.0.0")
 class SpoonSign(Star):
@@ -15,19 +18,17 @@ class SpoonSign(Star):
         super().__init__(context)
         self.config = config or {}
         # 数据文件路径
-        self.data_file = Path("data/spoon_sign.json")
+        self.data_file = Path(self.config.get("data_file", DATA_FILE))
         self.data_file.parent.mkdir(parents=True, exist_ok=True)
         self.user_data = self._load_data()
 
         # 抽卡图片文件夹路径（可通过配置项修改）
-        self.image_folder = Path(self.config.get("image_folder", "data/spoon_images"))
+        self.image_folder = Path(self.config.get("image_folder", IMAGE_FOLDER))
         self.image_folder.mkdir(parents=True, exist_ok=True)
 
-        # 注册指令
-        self.context.register_command("签到", self.handle_sign)
-        self.context.register_command("勺子查询", self.handle_query)
-        self.context.register_command("排行榜", self.handle_rank)
-        self.context.register_command("抽卡", self.handle_draw)
+    async def initialize(self):
+        """插件初始化（可选）"""
+        pass
 
     def _load_data(self) -> Dict[str, Any]:
         """加载用户数据"""
@@ -72,6 +73,7 @@ class SpoonSign(Star):
             chain.append(Image.from_file_system_path(str(image_path)))
         await event.send_result(chain)
 
+    @filter.command("签到", alias={"打卡"})
     async def handle_sign(self, event: AstrMessageEvent):
         """处理签到指令"""
         # 获取用户标识
@@ -114,6 +116,7 @@ class SpoonSign(Star):
         final_msg = f"{result_msg} 当前你有 {user['spoons']} 个勺子。"
         await self._send_result(event, final_msg)
 
+    @filter.command("勺子查询", alias={"查询"})
     async def handle_query(self, event: AstrMessageEvent):
         """查询当前勺子数量"""
         sender = event.get_sender()
@@ -124,6 +127,7 @@ class SpoonSign(Star):
         user = self._get_user(user_id)
         await self._send_result(event, f"你目前有 {user['spoons']} 个勺子。")
 
+    @filter.command("排行榜")
     async def handle_rank(self, event: AstrMessageEvent):
         """显示勺子持有者前十名"""
         if not self.user_data:
@@ -145,6 +149,7 @@ class SpoonSign(Star):
 
         await self._send_result(event, "\n".join(lines))
 
+    @filter.command("抽卡")
     async def handle_draw(self, event: AstrMessageEvent):
         """每日抽卡：随机发送一张图片"""
         sender = event.get_sender()
@@ -182,3 +187,7 @@ class SpoonSign(Star):
 
         # 发送图片和提示
         await self._send_result(event, f"✨ 抽卡成功！这是你今天的卡片：", chosen)
+
+    async def terminate(self):
+        """插件卸载时保存数据"""
+        self._save_data()
