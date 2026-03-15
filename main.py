@@ -5,7 +5,7 @@ import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from astrbot.api.event import AstrMessageEvent
+from astrbot.api.event import AstrMessageEvent, event_register
 from astrbot.api.star import Context, Star, register
 from astrbot.api.message_components import Plain, Image
 from astrbot.api import logger
@@ -67,7 +67,7 @@ class SpoonSign(Star):
             chain.append(Image.from_file_system_path(str(image_path)))
         await event.send_result(chain)
 
-    @event.register("签到")
+    @event_register("签到")
     async def handle_sign(self, event: AstrMessageEvent):
         """处理签到指令"""
         # 获取用户标识
@@ -110,7 +110,7 @@ class SpoonSign(Star):
         final_msg = f"{result_msg} 当前你有 {user['spoons']} 个勺子。"
         await self._send_result(event, final_msg)
 
-    @event.register("勺子查询")
+    @event_register("勺子查询")
     async def handle_query(self, event: AstrMessageEvent):
         """查询当前勺子数量"""
         sender = event.get_sender()
@@ -121,7 +121,7 @@ class SpoonSign(Star):
         user = self._get_user(user_id)
         await self._send_result(event, f"你目前有 {user['spoons']} 个勺子。")
 
-    @event.register("排行榜")
+    @event_register("排行榜")
     async def handle_rank(self, event: AstrMessageEvent):
         """显示勺子持有者前十名"""
         if not self.user_data:
@@ -143,7 +143,7 @@ class SpoonSign(Star):
 
         await self._send_result(event, "\n".join(lines))
 
-    @event.register("抽卡")
+    @event_register("抽卡")
     async def handle_draw(self, event: AstrMessageEvent):
         """每日抽卡：随机发送一张图片"""
         sender = event.get_sender()
