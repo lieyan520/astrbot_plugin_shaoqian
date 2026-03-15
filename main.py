@@ -76,10 +76,9 @@ class SpoonSign(Star):
     @filter.command("签到", alias={"打卡"})
     async def handle_sign(self, event: AstrMessageEvent):
         """处理签到指令"""
-        # 获取用户标识
-        sender = event.get_sender()
-        user_id = str(sender.user_id)
-        username = sender.nickname or "未知用户"
+        # 获取用户标识（修正：使用 get_sender_id 和 get_sender_name）
+        user_id = str(event.get_sender_id())
+        username = event.get_sender_name() or "未知用户"
         self._update_username(user_id, username)
 
         today = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -119,9 +118,8 @@ class SpoonSign(Star):
     @filter.command("勺子查询", alias={"查询"})
     async def handle_query(self, event: AstrMessageEvent):
         """查询当前勺子数量"""
-        sender = event.get_sender()
-        user_id = str(sender.user_id)
-        username = sender.nickname or ""
+        user_id = str(event.get_sender_id())
+        username = event.get_sender_name() or ""
         self._update_username(user_id, username)
 
         user = self._get_user(user_id)
@@ -152,9 +150,8 @@ class SpoonSign(Star):
     @filter.command("抽卡")
     async def handle_draw(self, event: AstrMessageEvent):
         """每日抽卡：随机发送一张图片"""
-        sender = event.get_sender()
-        user_id = str(sender.user_id)
-        username = sender.nickname or ""
+        user_id = str(event.get_sender_id())
+        username = event.get_sender_name() or ""
         self._update_username(user_id, username)
 
         today = datetime.datetime.now().strftime("%Y-%m-%d")
