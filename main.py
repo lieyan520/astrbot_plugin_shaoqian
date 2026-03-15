@@ -1,199 +1,183 @@
 import json
 import os
 import random
-import time
+import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, Any, Optional
 
-# 数据存储路径
-DATA_FILE = Path(__file__).parent / "spoon_data.json"
-# 抽卡图片文件夹路径（请自行修改为实际路径）
-CARD_IMG_FOLDER = Path(__file__).parent / "card_images"
-# 确保文件夹存在
-CARD_IMG_FOLDER.mkdir(exist_ok=True)
+from astrbot.api.event import AstrMessageEvent
+from astrbot.api.star import Context, Star, register
+from astrbot.api.message_components import Plain, Image
+from astrbot.api import logger
 
-# 初始化数据结构
-def init_data() -> Dict:
-    """初始化用户数据"""
-    default_data = {
-        "users": {},  # {user_id: {"spoons": 0, "last_checkin": 0, "last_draw": 0}}
-        "version": "1.0.0"
-    }
-    if not DATA_FILE.exists():
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(default_data, f, ensure_ascii=False, indent=2)
-        return default_data
-    # 读取现有数据
-    try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
-        # 数据损坏则重建
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(default_data, f, ensure_ascii=False, indent=2)
-        return default_data
+@register("spoon_sign", "你的名字", "勺签插件，每日签到、抽卡、排行榜", "1.0.0")
+class SpoonSign(Star):
+    def __init__(self, context: Context, config: dict = None):
+        super().__init__(context)
+        self.config = config or {}
+        # 数据文件路径
+        self.data_file = Path("data/spoon_sign.json")
+        self.data_file.parent.mkdir(parents=True, exist_ok=True)
+        self.user_data = self._load_data()
 
-# 保存数据
-def save_data(data: Dict):
-    """保存用户数据到JSON文件"""
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        # 抽卡图片文件夹路径（可通过配置项修改）
+        self.image_folder = Path(self.config.get("image_folder", "data/spoon_images"))
+        self.image_folder.mkdir(parents=True, exist_ok=True)
 
-# 获取今日日期戳（用于判断每日次数）
-def get_today_timestamp() -> int:
-    """获取今日0点的时间戳"""
-    return int(time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, 0)))
+    def _load_data(self) -> Dict[str, Any]:
+        """加载用户数据"""
+        if self.data_file.exists():
+            try:
+                with open(self.data_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"加载数据文件失败: {e}")
+                return {}
+        return {}
 
-# 签到功能核心逻辑
-def handle_checkin(user_id: str) -> str:
-    """
-    处理签到逻辑
-    :param user_id: 用户唯一标识
-    :return: 签到结果提示语
-    """
-    data = init_data()
-    today = get_today_timestamp()
-    
-    # 检查今日是否已签到
-    user_data = data["users"].get(user_id, {"spoons": 0, "last_checkin": 0, "last_draw": 0})
-    if user_data["last_checkin"] == today:
-        return f"喂喂喂！你今天已经签到过了！你当本勺是傻子吗！现在你有 {user_data['spoons']} 只勺子~"
-    
-    # 签到核心逻辑
-    success = random.choice([True, False])
-    if success:
-        # 签到成功：1-5个勺子
-        add_spoons = random.randint(1, 5)
-        user_data["spoons"] += add_spoons
-        result_msg = f"签到成功啦！你获得了 {add_spoons} 只勺子！现在你有 {user_data['spoons']} 只勺子~"
-    else:
-        # 签到失败：50%真失败，50%慈悲模式
-        mercy = random.choice([True, False])
-        if mercy:
-            user_data["spoons"] += 1
-            result_msg = "今天你的运气很差哦~签到失败了~不过本勺大发慈悲！送你一只呐~！获得 1 个安慰勺～现在你有 {user_data['spoons']} 只勺子~"
-        else:
-            result_msg = "今天你的运气很差哦~签到失败了~现在你有 {user_data['spoons']} 只勺子~"
-    
-    # 更新签到时间和保存数据
-    user_data["last_checkin"] = today
-    data["users"][user_id] = user_data
-    save_data(data)
+    def _save_data(self):
+        """保存用户数据"""
+        try:
+            with open(self.data_file, "w", encoding="utf-8") as f:
+                json.dump(self.user_data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"保存数据文件失败: {e}")
 
-# 查询勺子功能
-def handle_query(user_id: str) -> str:
-    """
-    处理勺子查询
-    :param user_id: 用户唯一标识
-    :return: 查询结果提示语
-    """
-    data = init_data()
-    user_data = data["users"].get(user_id, {"spoons": 0, "last_checkin": 0, "last_draw": 0})
-    return f"现在你有 {user_data['spoons']} 只勺子~"
-
-# 排行榜功能
-def handle_ranking() -> str:
-    """
-    生成勺子排行榜（前10）
-    :return: 排行榜提示语
-    """
-    data = init_data()
-    users = data["users"]
-    
-    # 无用户数据
-    if not users:
-        return "暂无用户数据，快来签到吧！"
-    
-    # 按勺子数排序（降序）
-    sorted_users = sorted(
-        users.items(),
-        key=lambda x: x[1]["spoons"],
-        reverse=True
-    )[:10]  # 取前10
-    
-    # 生成排行榜文本
-    ranking_msg = "🥄 勺子排行榜 TOP10 🥄\n"
-    for idx, (uid, udata) in enumerate(sorted_users, 1):
-        ranking_msg += f"{idx}. 用户{uid}：{udata['spoons']} 只勺子\n"
-    
-    return ranking_msg.strip()
-
-# 抽卡功能
-def handle_draw_card(user_id: str) -> Tuple[bool, str, str]:
-    """
-    处理抽卡逻辑
-    :param user_id: 用户唯一标识
-    :return: (是否成功, 提示语, 图片路径)
-    """
-    data = init_data()
-    today = get_today_timestamp()
-    
-    # 检查今日是否已抽卡
-    user_data = data["users"].get(user_id, {"spoons": 0, "last_checkin": 0, "last_draw": 0})
-    if user_data["last_draw"] == today:
-        return (False, f"你今天已经占卜过了！别想卡bug！本勺可是很聪明的！", "")
-    
-    # 检查图片文件夹是否有图片
-    img_files = [f for f in CARD_IMG_FOLDER.iterdir() if f.suffix.lower() in [".jpg", ".png", ".jpeg", ".gif"]]
-    if not img_files:
-        return (False, "抽卡失败！卡池为空，请先在 card_images 文件夹中放入图片。", "")
-    
-    # 随机抽取一张图片
-    random_img = random.choice(img_files)
-    
-    # 更新抽卡时间
-    user_data["last_draw"] = today
-    data["users"][user_id] = user_data
-    save_data(data)
-    
-    return (True, f"✨让本勺看看你抽到了什么~✨", str(random_img))
-
-# AstrBot插件入口函数（核心）
-def astrbot_plugin_main(command: str, user_id: str, *args, **kwargs):
-    """
-    AstrBot插件主入口
-    :param command: 用户发送的指令
-    :param user_id: 用户唯一标识（如QQ号/微信号）
-    :return: 回复内容（文本/图片）
-    """
-    # 指令匹配
-    if command.strip() == "签到":
-        return handle_checkin(user_id)
-    elif command.strip() == "勺子查询":
-        return handle_query(user_id)
-    elif command.strip() == "排行榜":
-        return handle_ranking()
-    elif command.strip() == "抽卡":
-        success, msg, img_path = handle_draw_card(user_id)
-        if success:
-            # 返回图片+文本（适配AstrBot的返回格式，具体可根据实际框架调整）
-            return {
-                "type": "image",
-                "path": img_path,
-                "text": msg
+    def _get_user(self, user_id: str) -> dict:
+        """获取用户数据，不存在则初始化"""
+        if user_id not in self.user_data:
+            self.user_data[user_id] = {
+                "spoons": 0,
+                "last_sign": None,      # 格式 YYYY-MM-DD
+                "last_draw": None,      # 格式 YYYY-MM-DD
+                "username": ""           # 最近使用的昵称
             }
-        else:
-            return msg
-    else:
-        # 非插件指令，返回空（交由其他插件处理）
-        return None
+        return self.user_data[user_id]
 
-# 测试代码（可选）
-if __name__ == "__main__":
-    # 模拟测试
-    test_user = "test_user_123"
-    
-    # 测试签到
-    print(handle_checkin(test_user))
-    
-    # 测试重复签到
-    print(handle_checkin(test_user))
-    
-    # 测试查询
-    print(handle_query(test_user))
-    
-    # 测试排行榜
-    print(handle_ranking())
-    
-    # 测试抽卡（需先在card_images文件夹放图片）
-    print(handle_draw_card(test_user))
+    def _update_username(self, user_id: str, username: str):
+        """更新用户昵称"""
+        user = self._get_user(user_id)
+        if username:
+            user["username"] = username
+
+    async def _send_result(self, event: AstrMessageEvent, message: str, image_path: Optional[Path] = None):
+        """发送消息（可选附带图片）"""
+        chain = [Plain(message)]
+        if image_path and image_path.exists():
+            chain.append(Image.from_file_system_path(str(image_path)))
+        await event.send_result(chain)
+
+    @event.register("签到")
+    async def handle_sign(self, event: AstrMessageEvent):
+        """处理签到指令"""
+        # 获取用户标识
+        sender = event.get_sender()
+        user_id = str(sender.user_id)
+        username = sender.nickname or "未知用户"
+        self._update_username(user_id, username)
+
+        today = datetime.datetime.now().strftime("%Y-%m-%d")
+        user = self._get_user(user_id)
+
+        # 检查是否已签到
+        if user.get("last_sign") == today:
+            await self._send_result(event, f"你今天已经签到过了，明天再来吧！当前你有 {user['spoons']} 个勺子。")
+            return
+
+        # 签到逻辑
+        spoons_gained = 0
+        result_msg = ""
+
+        # 第一步：50% 成功 / 50% 失败
+        if random.random() < 0.5:  # 成功
+            spoons_gained = random.randint(1, 5)
+            user["spoons"] += spoons_gained
+            result_msg = f"签到成功！获得 {spoons_gained} 个勺子。"
+        else:  # 失败
+            # 第二步：50% 真正失败 / 50% 慈悲模式
+            if random.random() < 0.5:  # 真正失败
+                result_msg = "签到失败...下次好运。"
+            else:  # 慈悲模式
+                spoons_gained = 1
+                user["spoons"] += spoons_gained
+                result_msg = "签到失败，但触发了慈悲模式！获得 1 个勺子。"
+
+        # 更新最后签到日期
+        user["last_sign"] = today
+        self._save_data()
+
+        # 最终消息：加上当前勺子总数
+        final_msg = f"{result_msg} 当前你有 {user['spoons']} 个勺子。"
+        await self._send_result(event, final_msg)
+
+    @event.register("勺子查询")
+    async def handle_query(self, event: AstrMessageEvent):
+        """查询当前勺子数量"""
+        sender = event.get_sender()
+        user_id = str(sender.user_id)
+        username = sender.nickname or ""
+        self._update_username(user_id, username)
+
+        user = self._get_user(user_id)
+        await self._send_result(event, f"你目前有 {user['spoons']} 个勺子。")
+
+    @event.register("排行榜")
+    async def handle_rank(self, event: AstrMessageEvent):
+        """显示勺子持有者前十名"""
+        if not self.user_data:
+            await self._send_result(event, "目前还没有人拥有勺子～")
+            return
+
+        # 按勺子数量降序排序，取前10
+        sorted_users = sorted(
+            self.user_data.items(),
+            key=lambda item: item[1].get("spoons", 0),
+            reverse=True
+        )[:10]
+
+        lines = ["🏆 勺子排行榜 🏆"]
+        for idx, (user_id, data) in enumerate(sorted_users, 1):
+            name = data.get("username") or user_id[:4] + "..."  # 显示昵称或截断ID
+            spoons = data.get("spoons", 0)
+            lines.append(f"{idx}. {name} : {spoons} 个勺子")
+
+        await self._send_result(event, "\n".join(lines))
+
+    @event.register("抽卡")
+    async def handle_draw(self, event: AstrMessageEvent):
+        """每日抽卡：随机发送一张图片"""
+        sender = event.get_sender()
+        user_id = str(sender.user_id)
+        username = sender.nickname or ""
+        self._update_username(user_id, username)
+
+        today = datetime.datetime.now().strftime("%Y-%m-%d")
+        user = self._get_user(user_id)
+
+        # 检查是否已抽卡
+        if user.get("last_draw") == today:
+            await self._send_result(event, f"你今天已经抽过卡了，明天再来吧！当前你有 {user['spoons']} 个勺子。")
+            return
+
+        # 检查图片文件夹是否存在且非空
+        if not self.image_folder.exists():
+            await self._send_result(event, "图片文件夹不存在，请联系管理员。")
+            return
+
+        # 获取所有图片文件（常见扩展名）
+        image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
+        images = [f for f in self.image_folder.iterdir() if f.suffix.lower() in image_extensions]
+
+        if not images:
+            await self._send_result(event, "图片文件夹中没有可用的图片。")
+            return
+
+        # 随机选择一张图片
+        chosen = random.choice(images)
+
+        # 更新最后抽卡日期
+        user["last_draw"] = today
+        self._save_data()
+
+        # 发送图片和提示
+        await self._send_result(event, f"✨ 抽卡成功！这是你今天的卡片：", chosen)
