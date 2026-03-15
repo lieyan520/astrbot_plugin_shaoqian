@@ -66,17 +66,9 @@ class SpoonSign(Star):
         if username:
             user["username"] = username
 
-    async def _send_result(self, event: AstrMessageEvent, message: str, image_path: Optional[Path] = None):
-        """发送消息（可选附带图片）"""
-        chain = [Plain(message)]
-        if image_path and image_path.exists():
-            chain.append(Image.from_file_system_path(str(image_path)))
-        await event.send_result(chain)
-
     @filter.command("签到", alias={"打卡"})
     async def handle_sign(self, event: AstrMessageEvent):
         """处理签到指令"""
-        # 获取用户标识（修正：使用 get_sender_id 和 get_sender_name）
         user_id = str(event.get_sender_id())
         username = event.get_sender_name() or "未知用户"
         self._update_username(user_id, username)
@@ -86,20 +78,18 @@ class SpoonSign(Star):
 
         # 检查是否已签到
         if user.get("last_sign") == today:
-            await self._send_result(event, f"你今天已经签到过了，明天再来吧！当前你有 {user['spoons']} 个勺子。")
+            yield event.plain_result(f"你今天已经签到过了，明天再来吧！当前你有 {user['spoons']} 个勺子。")
             return
 
         # 签到逻辑
         spoons_gained = 0
         result_msg = ""
 
-        # 第一步：50% 成功 / 50% 失败
         if random.random() < 0.5:  # 成功
             spoons_gained = random.randint(1, 5)
             user["spoons"] += spoons_gained
             result_msg = f"签到成功！获得 {spoons_gained} 个勺子。"
         else:  # 失败
-            # 第二步：50% 真正失败 / 50% 慈悲模式
             if random.random() < 0.5:  # 真正失败
                 result_msg = "签到失败...下次好运。"
             else:  # 慈悲模式
@@ -111,9 +101,8 @@ class SpoonSign(Star):
         user["last_sign"] = today
         self._save_data()
 
-        # 最终消息：加上当前勺子总数
         final_msg = f"{result_msg} 当前你有 {user['spoons']} 个勺子。"
-        await self._send_result(event, final_msg)
+        yield event.plain_result(final_msg)
 
     @filter.command("勺子查询", alias={"查询"})
     async def handle_query(self, event: AstrMessageEvent):
@@ -123,13 +112,13 @@ class SpoonSign(Star):
         self._update_username(user_id, username)
 
         user = self._get_user(user_id)
-        await self._send_result(event, f"你目前有 {user['spoons']} 个勺子。")
+        yield event.plain_result(f"你目前有 {user['spoons']} 个勺子。")
 
     @filter.command("排行榜")
     async def handle_rank(self, event: AstrMessageEvent):
         """显示勺子持有者前十名"""
         if not self.user_data:
-            await self._send_result(event, "目前还没有人拥有勺子～")
+            yield event.plain_result("目前还没有人拥有勺子～")
             return
 
         # 按勺子数量降序排序，取前10
@@ -145,7 +134,7 @@ class SpoonSign(Star):
             spoons = data.get("spoons", 0)
             lines.append(f"{idx}. {name} : {spoons} 个勺子")
 
-        await self._send_result(event, "\n".join(lines))
+        yield event.plain_result("\n".join(lines))
 
     @filter.command("抽卡")
     async def handle_draw(self, event: AstrMessageEvent):
@@ -159,12 +148,12 @@ class SpoonSign(Star):
 
         # 检查是否已抽卡
         if user.get("last_draw") == today:
-            await self._send_result(event, f"你今天已经抽过卡了，明天再来吧！当前你有 {user['spoons']} 个勺子。")
+            yield event.plain_result(f"你今天已经抽过卡了，明天再来吧！当前你有 {user['spoons']} 个勺子。")
             return
 
         # 检查图片文件夹是否存在且非空
         if not self.image_folder.exists():
-            await self._send_result(event, "图片文件夹不存在，请联系管理员。")
+            yield event.plain_result("图片文件夹不存在，请联系管理员。")
             return
 
         # 获取所有图片文件（常见扩展名）
@@ -172,7 +161,7 @@ class SpoonSign(Star):
         images = [f for f in self.image_folder.iterdir() if f.suffix.lower() in image_extensions]
 
         if not images:
-            await self._send_result(event, "图片文件夹中没有可用的图片。")
+            yield event.plain_result("图片文件夹中没有可用的图片。")
             return
 
         # 随机选择一张图片
@@ -182,8 +171,14 @@ class SpoonSign(Star):
         user["last_draw"] = today
         self._save_data()
 
-        # 发送图片和提示
-        await self._send_result(event, f"✨ 抽卡成功！这是你今天的卡片：", chosen)
+        # 尝试发送文字+图片组合消息（如果框架支持 chain_result）
+        try:
+            chain = [Plain("✨ 抽卡成功！这是你今天的卡片："), Image.from_file_system_path(str(chosen))]
+            yield event.chain_result(chain)
+        except AttributeError:
+            # 如果不支持 chain_result，则分两条发送（但不符合“一条信息”的要求，备选方案）
+            yield event.plain_result("✨ 抽卡成功！这是你今天的卡片：")
+            yield event.image_result(str(chosen))
 
     async def terminate(self):
         """插件卸载时保存数据"""
